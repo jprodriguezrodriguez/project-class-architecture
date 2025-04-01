@@ -13,6 +13,9 @@ char datom;
 long segundos, auxsegundos;
 int datoi[4], direc, direccion;
 int dato = 0x00;
+int pines[] = {2, 3, 4, 5}; 
+byte estados[] = {HIGH, LOW};
+int tiempo = 200;
 
 const byte ROWS = 4;
 const byte COLS = 4;
@@ -84,10 +87,34 @@ void setDateDs1307(byte second,      // 0-59
   Wire.endTransmission();  
 }
 
+void i2c_eeprom_write_byte(int deviceaddress, unsigned int eeaddress, byte data) {
+  int rdata=data;
+  Wire.beginTransmission (deviceaddress);
+  Wire.write ((int)(eeaddress>>8)); //MSB
+  Wire.write ((int)(eeaddress & 0XFF)); //LSB
+  Wire.write (rdata);
+  Wire.endTransmission();
+}
+
+byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress, unsigned int eeprom) {
+  byte rdata = 0xFF;
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((int)(eeaddress>>8));
+  Wire.write((int)(eeaddress & 0xFF));
+  Wire.endTransmission();
+  Wire.requestFrom (deviceaddress,1);
+  if(Wire.available()) {
+    rdata = Wire.read();
+  }
+  return rdata;
+}
+
 void setup() {
   lcd.begin(16, 2);
   Serial.begin(9600);
   Wire.begin();
+  inicializarMotor();
+  apagarMotor();
 }
 
 void horaFecha() {
@@ -152,7 +179,7 @@ void getEmptyMemoryPosition() {
 }
 
 void buildReport() {
-  //getDateDs1307(/*7 bytes - Argumentos*/);
+  getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
   date[0] = dayOfMonth;
   date[1] = month;
   date[2] = year;
@@ -160,6 +187,41 @@ void buildReport() {
   date[4] = minute;
   date[5] = second;
   date[6] = 0x0C;  // ID DEL USUARIO
+}
+
+void voltearDerecha() {
+  digitalWrite(pines[0], LOW);
+  digitalWrite(pines[1], HIGH);
+  digitalWrite(pines[2], HIGH);
+  digitalWrite(pines[3], LOW);
+  delay(tiempo);
+
+  digitalWrite(pines[0], HIGH);
+  digitalWrite(pines[1], LOW);
+  digitalWrite(pines[2], LOW);
+  digitalWrite(pines[3], HIGH);
+  delay(tiempo);
+}
+
+void apagarMotor() {
+  digitalWrite(pines[0], LOW);
+  digitalWrite(pines[1], LOW);
+  digitalWrite(pines[2], LOW);
+  digitalWrite(pines[3], LOW);
+}
+
+void inicializarMotor() {
+  pinMode(pines[0], OUTPUT);
+  pinMode(pines[1], OUTPUT);
+  pinMode(pines[2], OUTPUT);
+  pinMode(pines[3], OUTPUT);
+}
+
+void loadMotor(){
+  voltearDerecha();
+  delay(2000);
+  apagarMotor();
+  delay(3000);
 }
 
 void saveReport() {
@@ -364,8 +426,10 @@ paola:
     delay(3000);
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("3.SALIR");
-    delay(2000);
+    lcd.print("3.SERVOMOTORES");
+    lcd.setCursor(0, 1);
+    lcd.print("4.SALIR");
+    delay(3000);
     lcd.clear();
     unDigito();
     if (datom == 0x01) {
@@ -415,6 +479,10 @@ paola:
       goto paola;
     }
     if (datom == 0x03) {
+      loadMotor();
+      goto paola;
+    }
+    if (datom == 0x04) {
       goto inicio;
     }
   }
