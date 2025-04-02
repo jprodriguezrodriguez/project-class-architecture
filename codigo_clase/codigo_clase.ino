@@ -5,6 +5,8 @@ LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 #include <Key.h>
 #include <Keypad.h>
 #include <Wire.h>  //memoria externa
+#include <SD.h>
+#include <SPI.h>
 #define DS1307_I2C_ADDRESS 0X68
 
 int clave[4], i, b, dato1, dato2;
@@ -13,9 +15,11 @@ char datom;
 long segundos, auxsegundos;
 int datoi[4], direc, direccion;
 int dato = 0x00;
-int pines[] = {2, 3, 4, 5}; 
-byte estados[] = {HIGH, LOW};
-int tiempo = 200;
+int pines[] = { 2, 3, 4, 5 };
+byte estados[] = { HIGH, LOW };
+int tiempo = 2;
+File myFile;
+int pinCS = 49;
 
 const byte ROWS = 4;
 const byte COLS = 4;
@@ -50,17 +54,16 @@ void getDateDs1307(
   byte *dayOfWeek,
   byte *dayOfMonth,
   byte *month,
-  byte *year
-) {
+  byte *year) {
   Wire.beginTransmission(DS1307_I2C_ADDRESS);
-  Wire.write (0);
-  Wire.endTransmission ();
+  Wire.write(0);
+  Wire.endTransmission();
 
   Wire.requestFrom(DS1307_I2C_ADDRESS, 7);
 
-  *second = bcdToDec(Wire.read()&0x7f);
+  *second = bcdToDec(Wire.read() & 0x7f);
   *minute = bcdToDec(Wire.read());
-  *hour = bcdToDec(Wire.read()&0x3f);
+  *hour = bcdToDec(Wire.read() & 0x3f);
   *dayOfWeek = bcdToDec(Wire.read());
   *dayOfMonth = bcdToDec(Wire.read());
   *month = bcdToDec(Wire.read());
@@ -84,26 +87,26 @@ void setDateDs1307(byte second,      // 0-59
   Wire.write(decToBcd(dayOfMonth));
   Wire.write(decToBcd(month));
   Wire.write(decToBcd(year));
-  Wire.endTransmission();  
+  Wire.endTransmission();
 }
 
 void i2c_eeprom_write_byte(int deviceaddress, unsigned int eeaddress, byte data) {
-  int rdata=data;
-  Wire.beginTransmission (deviceaddress);
-  Wire.write ((int)(eeaddress>>8)); //MSB
-  Wire.write ((int)(eeaddress & 0XFF)); //LSB
-  Wire.write (rdata);
+  int rdata = data;
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((int)(eeaddress >> 8));    //MSB
+  Wire.write((int)(eeaddress & 0XFF));  //LSB
+  Wire.write(rdata);
   Wire.endTransmission();
 }
 
 byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress, unsigned int eeprom) {
   byte rdata = 0xFF;
   Wire.beginTransmission(deviceaddress);
-  Wire.write((int)(eeaddress>>8));
+  Wire.write((int)(eeaddress >> 8));
   Wire.write((int)(eeaddress & 0xFF));
   Wire.endTransmission();
-  Wire.requestFrom (deviceaddress,1);
-  if(Wire.available()) {
+  Wire.requestFrom(deviceaddress, 1);
+  if (Wire.available()) {
     rdata = Wire.read();
   }
   return rdata;
@@ -112,9 +115,47 @@ byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress, unsigned in
 void setup() {
   lcd.begin(16, 2);
   Serial.begin(9600);
-  Wire.begin();
   inicializarMotor();
-  apagarMotor();
+  Wire.begin();
+  pinMode(pinCS, OUTPUT);
+  Serial.println(pinCS);
+
+  // SD Card Initialization
+  if (SD.begin()) {
+    Serial.println("SD card is ready to use.");
+  } else {
+    Serial.println("SD card initialization failed");
+    return;
+  }
+
+  // Create/Open file
+  myFile = SD.open("test.txt", FILE_WRITE);
+
+  // if the file opened okay, write to it:
+  if (myFile) {
+    Serial.println("Writing to file...");
+    // Write to file
+    myFile.println("Testing text 1, 2 ,3...");
+    myFile.close();  // close the file
+    Serial.println("Done.");
+  }
+  // if the file didn't open, print an error:
+  else {
+    Serial.println("error opening test.txt");
+  }
+
+  // Reading the file
+  myFile = SD.open("test.txt");
+  if (myFile) {
+    Serial.println("Read:");
+    // Reading the whole file
+    while (myFile.available()) {
+      Serial.write(myFile.read());
+    }
+    myFile.close();
+  } else {
+    Serial.println("error opening test.txt");
+  }
 }
 
 void horaFecha() {
@@ -156,11 +197,11 @@ void updateClock() {
   second = 0x00;
 
   setDateDs1307(second, minute,
-    hour,
-    dayOfWeek,
-    dayOfMonth,
-    month,
-    year);
+                hour,
+                dayOfWeek,
+                dayOfMonth,
+                month,
+                year);
 }
 
 // Leer posición de memoria donde deso almacenar el dato
@@ -191,15 +232,24 @@ void buildReport() {
 
 void voltearDerecha() {
   digitalWrite(pines[0], LOW);
-  digitalWrite(pines[1], HIGH);
-  digitalWrite(pines[2], HIGH);
-  digitalWrite(pines[3], LOW);
-  delay(tiempo);
-
-  digitalWrite(pines[0], HIGH);
   digitalWrite(pines[1], LOW);
   digitalWrite(pines[2], LOW);
   digitalWrite(pines[3], HIGH);
+  delay(tiempo);
+  digitalWrite(pines[0], LOW);
+  digitalWrite(pines[1], LOW);
+  digitalWrite(pines[2], HIGH);
+  digitalWrite(pines[3], LOW);
+  delay(tiempo);
+  digitalWrite(pines[0], LOW);
+  digitalWrite(pines[1], HIGH);
+  digitalWrite(pines[2], LOW);
+  digitalWrite(pines[3], LOW);
+  delay(tiempo);
+  digitalWrite(pines[0], HIGH);
+  digitalWrite(pines[1], LOW);
+  digitalWrite(pines[2], LOW);
+  digitalWrite(pines[3], LOW);
   delay(tiempo);
 }
 
@@ -217,19 +267,12 @@ void inicializarMotor() {
   pinMode(pines[3], OUTPUT);
 }
 
-void loadMotor(){
-  voltearDerecha();
-  delay(2000);
-  apagarMotor();
-  delay(3000);
-}
-
 void saveReport() {
   getEmptyMemoryPosition();
   if (emptyPosition) {
     buildReport();
     for (i = 0; i < 7; i++) {
-      //i2c_eeprom_read_byte(0x50, dir, date[i]);
+      i2c_eeprom_read_byte(0x50, dir, date[i]);
       dir++;
       delay(5);
     }
@@ -344,6 +387,10 @@ void unDigito() {
 
   } while (flag == false);
 }
+
+//DTMF TONE GENERATOR -> DOMOTICA -> SMARTPHONE (Wifi)
+//Es mejor usar el shield, el objetivo es evitar el uso del teclado matricial
+//Contestador
 
 void loop() {
 inicio:
@@ -479,7 +526,10 @@ paola:
       goto paola;
     }
     if (datom == 0x03) {
-      loadMotor();
+      for (i = 0; i < 5000; i++) {
+        voltearDerecha();
+        delay(tiempo);
+      }
       goto paola;
     }
     if (datom == 0x04) {
@@ -544,7 +594,7 @@ jose:
       delay(3000);
       goto jose;
     }
-     if (datom == 0x02) {
+    if (datom == 0x02) {
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print("HORA Y FECHA ");
@@ -614,7 +664,7 @@ juan:
       delay(3000);
       goto juan;
     }
-     if (datom == 0x02) {
+    if (datom == 0x02) {
       lcd.clear();
       lcd.setCursor(0, 0);
       lcd.print("HORA Y FECHA ");
