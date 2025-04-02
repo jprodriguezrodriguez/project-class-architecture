@@ -118,44 +118,20 @@ void setup() {
   inicializarMotor();
   Wire.begin();
   pinMode(pinCS, OUTPUT);
+  Serial.println("pinCS");
   Serial.println(pinCS);
-
-  // SD Card Initialization
-  if (SD.begin()) {
-    Serial.println("SD card is ready to use.");
-  } else {
-    Serial.println("SD card initialization failed");
-    return;
-  }
-
-  // Create/Open file
-  myFile = SD.open("test.txt", FILE_WRITE);
-
-  // if the file opened okay, write to it:
-  if (myFile) {
-    Serial.println("Writing to file...");
-    // Write to file
-    myFile.println("Testing text 1, 2 ,3...");
-    myFile.close();  // close the file
-    Serial.println("Done.");
-  }
-  // if the file didn't open, print an error:
-  else {
-    Serial.println("error opening test.txt");
-  }
-
-  // Reading the file
-  myFile = SD.open("test.txt");
-  if (myFile) {
-    Serial.println("Read:");
-    // Reading the whole file
-    while (myFile.available()) {
-      Serial.write(myFile.read());
+  Serial.println("\nInicializando tarjeta SD");
+  do {
+    if (!SD.begin(pinCS)) {
+      Serial.println("Coloque una SD en el socket");
     }
-    myFile.close();
-  } else {
-    Serial.println("error opening test.txt");
-  }
+  } while (!SD.begin(pinCS));
+
+  Serial.println("SD conectada");
+
+  myFile = SD.open("test.txt", FILE_WRITE);
+  myFile.println("#;Reporte;Id equipo;Dia;Mes;Año");
+  myFile.close();
 }
 
 void horaFecha() {
@@ -533,6 +509,19 @@ paola:
       goto paola;
     }
     if (datom == 0x04) {
+      buildReport();
+      myFile = SD.open("test.txt", FILE_WRITE);
+      for (i = 0; i < 7; i++) {
+        Serial.print("Guardando - ");
+        Serial.print(i);
+        Serial.print(" - ");
+        Serial.print(date[i]);
+        Serial.println();
+        delay(5);
+        myFile.println(date[i]);
+      }
+      myFile.println("-------------------------");
+      myFile.close();
       goto inicio;
     }
   }
