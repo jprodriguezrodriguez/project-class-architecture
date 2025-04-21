@@ -9,6 +9,21 @@ LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 #include <SPI.h>
 #define DS1307_I2C_ADDRESS 0X68
 
+const uint8_t USERS = 3;
+const uint8_t  I2C_ADDR       = 0x50;        // dirección de la EEPROM
+const uint16_t START_ADDR     = 0x0010;      // inicio de almacenamiento
+const uint8_t  RECORD_SIZE    = 8;           // bytes por reporte (#Reporte + DD MM AA HH MM SS + ID)
+const uint8_t  MAX_REPORTS    = 30;          // máximo de reportes por usuario
+
+const uint16_t userBaseAddr[USERS] = {
+  0x0010,  // Usuario 1
+  0x0100,  // Usuario 2
+  0x0200   // Usuario 3
+};
+
+uint8_t reportCounters[USERS] = {0};  // contador por usuario
+uint8_t currentUserId = 1; 
+
 int clave[4], i, b, dato1, dato2;
 byte second, minute, hour, dayOfWeek, dayOfMonth, month, year;
 char datom;
@@ -99,7 +114,7 @@ void i2c_eeprom_write_byte(int deviceaddress, unsigned int eeaddress, byte data)
   Wire.endTransmission();
 }
 
-byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress, unsigned int eeprom) {
+byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress) {
   byte rdata = 0xFF;
   Wire.beginTransmission(deviceaddress);
   Wire.write((int)(eeaddress >> 8));
@@ -180,32 +195,6 @@ void updateClock() {
                 year);
 }
 
-// Leer posición de memoria donde deso almacenar el dato
-// ¿La posición en memoria está vacía (contiene FF)? guardarAqui : moverOchoPosiciones -> Vuelve al inicio
-// Se genera un reporte cada vez que el ususario seleccione la opción "REPORTE" en el menú
-//i2c_eeprom_read_byte(0x50, dir);  // Buscar este método jaja
-void getEmptyMemoryPosition() {
-  do {
-    dato = 0x00;
-    if (dato == 0xFF) {
-      emptyPosition = true;
-    } else {
-      dir = dir + 8;
-    }                                             // 248
-  } while (emptyPosition = false && dir < 0xF8);  // última posición en memoria disponible para el primer usuario
-}
-
-void buildReport() {
-  getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
-  date[0] = dayOfMonth;
-  date[1] = month;
-  date[2] = year;
-  date[3] = hour;
-  date[4] = minute;
-  date[5] = second;
-  date[6] = 0x0C;  // ID DEL USUARIO
-}
-
 void voltearDerecha() {
   digitalWrite(pines[0], LOW);
   digitalWrite(pines[1], LOW);
@@ -243,21 +232,70 @@ void inicializarMotor() {
   pinMode(pines[3], OUTPUT);
 }
 
-void saveReport() {
-  getEmptyMemoryPosition();
-  if (emptyPosition) {
-    buildReport();
-    for (i = 0; i < 7; i++) {
-      i2c_eeprom_read_byte(0x50, dir, date[i]);
-      dir++;
-      delay(5);
+// Leer posición de memoria donde deseo almacenar el dato
+// ¿La posición en memoria está vacía (contiene FF)? guardarAqui : moverOchoPosiciones -> Vuelve al inicio
+//i2c_eeprom_read_byte(0x50, dir);  // Buscar este método jaja
+// Se genera un reporte cada vez que el ususario seleccione la opción "REPORTE" en el menú
+bool getEmptyMemoryPosition(uint8_t userIndex, uint16_t &addr) {
+  uint16_t base = userBaseAddr[userIndex];
+  for (uint8_t rpt = 0; rpt < MAX_REPORTS; rpt++) {
+    uint16_t checkAddr = base + rpt * RECORD_SIZE;
+    byte marker = i2c_eeprom_read_byte(I2C_ADDR, checkAddr);
+    if (marker == 0xFF) {
+      addr = checkAddr;
+      return true;
     }
-  } else {
+  }
+  return false;
+}
+
+
+void buildReport(uint8_t buf[], uint8_t reportNum, uint8_t userId) {
+  updateClock();
+  getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
+
+  buf[0] = reportNum;      // número de reporte
+  buf[1] = dayOfMonth;
+  buf[2] = month;
+  buf[3] = year;
+  buf[4] = hour;
+  buf[5] = minute;
+  buf[6] = second;
+  buf[7] = userId;
+}
+
+
+void saveReport() {
+  uint8_t userIndex = currentUserId - 1;
+
+  if (reportCounters[userIndex] >= MAX_REPORTS) {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("MEMORIA LLENA");
+    return;
   }
+
+  uint16_t addr;
+  if (!getEmptyMemoryPosition(userIndex, addr)) {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ERROR MEMORIA");
+    return;
+  }
+
+  uint8_t report[RECORD_SIZE];
+  reportCounters[userIndex]++;
+  buildReport(report, reportCounters[userIndex], currentUserId);
+
+  for (uint8_t i = 0; i < RECORD_SIZE; i++) {
+    i2c_eeprom_write_byte(I2C_ADDR, addr + i, report[i]);
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("REPORTE GUARDADO");
 }
+
 
 void teclado() {
   lcd.clear();  // limpiar la pantalla
@@ -509,7 +547,6 @@ paola:
       goto paola;
     }
     if (datom == 0x04) {
-      buildReport();
       myFile = SD.open("test.txt", FILE_WRITE);
       for (i = 0; i < 7; i++) {
         Serial.print("Guardando - ");
@@ -522,6 +559,7 @@ paola:
       }
       myFile.println("-------------------------");
       myFile.close();
+      saveReport();
       goto inicio;
     }
   }
