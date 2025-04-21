@@ -4,25 +4,10 @@
 LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 #include <Key.h>
 #include <Keypad.h>
-#include <Wire.h>  //memoria externa
+#include <Wire.h>
 #include <SD.h>
 #include <SPI.h>
 #define DS1307_I2C_ADDRESS 0X68
-
-const uint8_t USERS = 3;
-const uint8_t  I2C_ADDR       = 0x50;        // dirección de la EEPROM
-const uint16_t START_ADDR     = 0x0010;      // inicio de almacenamiento
-const uint8_t  RECORD_SIZE    = 8;           // bytes por reporte (#Reporte + DD MM AA HH MM SS + ID)
-const uint8_t  MAX_REPORTS    = 30;          // máximo de reportes por usuario
-
-const uint16_t userBaseAddr[USERS] = {
-  0x0010,  // Usuario 1
-  0x0100,  // Usuario 2
-  0x0200   // Usuario 3
-};
-
-uint8_t reportCounters[USERS] = {0};  // contador por usuario
-uint8_t currentUserId = 1; 
 
 int clave[4], i, b, dato1, dato2;
 byte second, minute, hour, dayOfWeek, dayOfMonth, month, year;
@@ -34,7 +19,10 @@ int pines[] = { 2, 3, 4, 5 };
 byte estados[] = { HIGH, LOW };
 int tiempo = 2;
 File myFile;
+File reportFile;
 int pinCS = 49;
+byte userId = 0x0C;
+int reportNumber = 0;
 
 const byte ROWS = 4;
 const byte COLS = 4;
@@ -130,8 +118,8 @@ byte i2c_eeprom_read_byte(int deviceaddress, unsigned int eeaddress) {
 void setup() {
   lcd.begin(16, 2);
   Serial.begin(9600);
-  inicializarMotor();
   Wire.begin();
+  inicializarMotor();
   pinMode(pinCS, OUTPUT);
   Serial.println("pinCS");
   Serial.println(pinCS);
@@ -149,8 +137,7 @@ void setup() {
   myFile.close();
 }
 
-void horaFecha() {
-  // updateClock();
+void horaFecha() {  
   getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -187,12 +174,7 @@ void updateClock() {
   minute = 0x22;
   second = 0x00;
 
-  setDateDs1307(second, minute,
-                hour,
-                dayOfWeek,
-                dayOfMonth,
-                month,
-                year);
+  setDateDs1307(second, minute, hour, dayOfWeek, dayOfMonth, month, year);
 }
 
 void voltearDerecha() {
@@ -232,73 +214,139 @@ void inicializarMotor() {
   pinMode(pines[3], OUTPUT);
 }
 
-// Leer posición de memoria donde deseo almacenar el dato
-// ¿La posición en memoria está vacía (contiene FF)? guardarAqui : moverOchoPosiciones -> Vuelve al inicio
-//i2c_eeprom_read_byte(0x50, dir);  // Buscar este método jaja
-// Se genera un reporte cada vez que el ususario seleccione la opción "REPORTE" en el menú
-bool getEmptyMemoryPosition(uint8_t userIndex, uint16_t &addr) {
-  uint16_t base = userBaseAddr[userIndex];
-  for (uint8_t rpt = 0; rpt < MAX_REPORTS; rpt++) {
-    uint16_t checkAddr = base + rpt * RECORD_SIZE;
-    byte marker = i2c_eeprom_read_byte(I2C_ADDR, checkAddr);
-    if (marker == 0xFF) {
-      addr = checkAddr;
-      return true;
-    }
-  }
-  return false;
-}
-
-
-void buildReport(uint8_t buf[], uint8_t reportNum, uint8_t userId) {
-  updateClock();
+void buildReport() {
   getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
-
-  buf[0] = reportNum;      // número de reporte
-  buf[1] = dayOfMonth;
-  buf[2] = month;
-  buf[3] = year;
-  buf[4] = hour;
-  buf[5] = minute;
-  buf[6] = second;
-  buf[7] = userId;
+  date[0] = dayOfMonth;
+  date[1] = month;
+  date[2] = year;
+  date[3] = hour;
+  date[4] = minute;
+  date[5] = second;
 }
 
+void saveReportToSD(byte userId) {
+  buildReport();
+  uint8_t reportNum = getNextReportNumber(userId);
 
-void saveReport() {
-  uint8_t userIndex = currentUserId - 1;
-
-  if (reportCounters[userIndex] >= MAX_REPORTS) {
+  char filename[20];
+  sprintf(filename, "rep-%d.txt", userId);
+  Serial.println(filename);
+  reportFile = SD.open(filename, FILE_WRITE);
+  if (reportFile) {
+    reportFile.print("#");
+    if (reportNumber < 10) reportFile.print("0");
+    reportFile.print(reportNum);
+    reportFile.print("\t");
+    reportFile.print(date[0]);
+    reportFile.print("\t");
+    reportFile.print(date[1]);
+    reportFile.print("\t");
+    reportFile.print(date[2]);
+    reportFile.print("\t");
+    reportFile.print(date[3]);
+    reportFile.print("\t");
+    reportFile.print(date[4]);
+    reportFile.print("\t");
+    reportFile.print(date[5]);
+    reportFile.print("\t");
+    reportFile.print(userId);
+    reportFile.println();
+    reportFile.close();
+    for (i = 0; i < 6; i++) {
+      Serial.print("Guardando - ");
+      Serial.print(i);
+      Serial.print(" - ");
+      Serial.print(date[i]);
+      Serial.println();
+    }
+    Serial.println("Reporte guardado");
+  } else {
     lcd.clear();
     lcd.setCursor(0, 0);
-    lcd.print("MEMORIA LLENA");
-    return;
+    lcd.print("Error al guardar");
   }
+}
 
-  uint16_t addr;
-  if (!getEmptyMemoryPosition(userIndex, addr)) {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("ERROR MEMORIA");
-    return;
-  }
-
-  uint8_t report[RECORD_SIZE];
-  reportCounters[userIndex]++;
-  buildReport(report, reportCounters[userIndex], currentUserId);
-
-  for (uint8_t i = 0; i < RECORD_SIZE; i++) {
-    i2c_eeprom_write_byte(I2C_ADDR, addr + i, report[i]);
-  }
-
+void printReports(byte userId) {
   lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("REPORTE GUARDADO");
+  char filename[20];
+  sprintf(filename, "rep-%d.txt", userId);
+
+  reportFile = SD.open(filename);
+  if (reportFile) {
+    while (reportFile.available()) {
+      String linea = reportFile.readStringUntil('\n');
+      char buffer[50];
+      linea.toCharArray(buffer, sizeof(buffer));
+
+      int campos[8];
+      int index = 0;
+      char *token = strtok(buffer, "\t");
+      while (token != NULL && index < 8) {
+        if (index == 0 && token[0] == '#') token++;
+        campos[index++] = atoi(token);
+        token = strtok(NULL, "\t");
+      }
+
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("#");
+      if (campos[0] < 10) lcd.print("0");
+      lcd.print(campos[0]);
+      lcd.print("  ");
+      if (campos[1] < 10) lcd.print("0");
+      lcd.print(campos[1]);
+      lcd.print("/");
+      if (campos[2] < 10) lcd.print("0");
+      lcd.print(campos[2]);
+      lcd.print("/");
+      lcd.print(campos[3]);
+
+      lcd.setCursor(0, 1);
+      if (campos[4] < 10) lcd.print("0");
+      lcd.print(campos[4]);
+      lcd.print(":");
+      if (campos[5] < 10) lcd.print("0");
+      lcd.print(campos[5]);
+      lcd.print(":");
+      if (campos[6] < 10) lcd.print("0");
+      lcd.print(campos[6]);
+      lcd.print("  U:");
+      lcd.print(campos[7]);
+      delay(1500);
+    }
+    reportFile.close();
+  } else {
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("No hay reportes");
+  }
 }
+
+
+uint8_t getNextReportNumber(byte userId) {
+  char filename[20];
+  sprintf(filename, "rep-%d.txt", userId);
+  File reportFile = SD.open(filename, FILE_READ);
+  uint8_t count = 0;
+
+  if (reportFile) {
+    while (reportFile.available()) {
+      String line = reportFile.readStringUntil('\n');
+      if (line.length() > 0) {
+        count++;
+      }
+    }
+    reportFile.close();
+  }
+  return (count < 30) ? count + 1 : 0;
+}
+
+
 
 
 void teclado() {
-  lcd.clear();  // limpiar la pantalla
+  lcd.clear();
   auxsegundos = 0;
   segundos = 0;
   b = 6;
@@ -306,14 +354,14 @@ void teclado() {
     do {
       datom = keypad.getKey();
       delay(60);
-      if (datom != '\0')  // SI DATOM ES DIFERENTE DE NADA
+      if (datom != '\0' 
       {
         switch (i + 1) {
           case 1:
             lcd.setCursor(6, 1);
             lcd.print(datom);
             clave[0] = datom - 0x30;
-            clave[0] = (clave[0] << 4);  // igual que la instruccion swap
+            clave[0] = (clave[0] << 4);
             lcd.setCursor(6, 0);
             lcd.print("*");
             delay(50);
@@ -335,7 +383,7 @@ void teclado() {
             lcd.print(datom);
 
             clave[2] = datom - 0x30;
-            clave[2] = (clave[2] << 4);  // igual que la instruccion swap
+            clave[2] = (clave[2] << 4);
             lcd.setCursor(8, 0);
             lcd.print("*");
             delay(50);
@@ -432,7 +480,7 @@ inicio:
   lcd.setCursor(0, 1);
   lcd.print(" INGRESE CLAVE");
   delay(1000);
-  leer_memoria();  // datoi[0] = 0xbb, datoi[1] = 0xbb, datoi[2] = 0xbb, datoi[3] = 0xbb,
+  leer_memoria();
   teclado();
 
   if (clave[0] == 0x23 & clave[1] == 0x45) {
@@ -547,19 +595,20 @@ paola:
       goto paola;
     }
     if (datom == 0x04) {
-      myFile = SD.open("test.txt", FILE_WRITE);
-      for (i = 0; i < 7; i++) {
-        Serial.print("Guardando - ");
-        Serial.print(i);
-        Serial.print(" - ");
-        Serial.print(date[i]);
-        Serial.println();
-        delay(5);
-        myFile.println(date[i]);
-      }
-      myFile.println("-------------------------");
-      myFile.close();
-      saveReport();
+      saveReportToSD(0x01);
+      reportNumber++;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("GUARDANDO");
+      lcd.setCursor(0, 1);
+      lcd.print("REPORTE");
+      delay(1000);
+      lcd.clear();
+      printReports(0x01);
+      delay(3000);
+      goto paola;
+    }
+    if (datom == 0x05) {
       goto inicio;
     }
   }
@@ -631,6 +680,27 @@ jose:
       goto jose;
     }
     if (datom == 0x03) {
+      for (i = 0; i < 5000; i++) {
+        voltearDerecha();
+        delay(tiempo);
+      }
+      goto jose;
+    }
+    if (datom == 0x04) {
+      saveReportToSD(0x02);
+      reportNumber++;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("GUARDANDO");
+      lcd.setCursor(0, 1);
+      lcd.print("REPORTE");
+      delay(1000);
+      lcd.clear();
+      printReports(0x02);
+      delay(3000);
+      goto jose;
+    }
+    if (datom == 0x05) {
       goto inicio;
     }
   }
@@ -701,6 +771,27 @@ juan:
       goto juan;
     }
     if (datom == 0x03) {
+      for (i = 0; i < 5000; i++) {
+        voltearDerecha();
+        delay(tiempo);
+      }
+      goto juan;
+    }
+    if (datom == 0x04) {
+      saveReportToSD(0x03);
+      reportNumber++;
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("GUARDANDO");
+      lcd.setCursor(0, 1);
+      lcd.print("REPORTE");
+      delay(1000);
+      lcd.clear();
+      printReports(0x03);
+      delay(3000);
+      goto juan;
+    }
+    if (datom == 0x05) {
       goto inicio;
     }
   }
