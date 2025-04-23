@@ -8,6 +8,11 @@ LiquidCrystal lcd(13, 12, 11, 10, 9, 8);
 #include <SD.h>
 #include <SPI.h>
 #define DS1307_I2C_ADDRESS 0X68
+#define Q1 46
+#define Q2 44
+#define Q3 42
+#define Q4 40
+#define STQ 19
 
 int clave[4], i, b, dato1, dato2;
 byte second, minute, hour, dayOfWeek, dayOfMonth, month, year;
@@ -135,9 +140,16 @@ void setup() {
   myFile = SD.open("test.txt", FILE_WRITE);
   myFile.println("#;Reporte;Id equipo;Dia;Mes;Año");
   myFile.close();
+
+  pinMode(STQ, INPUT);
+  pinMode(Q1, INPUT);
+  pinMode(Q2, INPUT);
+  pinMode(Q3, INPUT);
+  pinMode(Q4, INPUT);
 }
 
-void horaFecha() {  
+void horaFecha() {
+  updateClock();
   getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
   lcd.clear();
   lcd.setCursor(0, 0);
@@ -166,12 +178,12 @@ void horaFecha() {
 }
 
 void updateClock() {
-  dayOfMonth = 0x19;
-  month = 0x03;
+  dayOfMonth = 0x16;
+  month = 0x04;
   year = 0x19;
   dayOfWeek = 0x02;
-  hour = 0x13;
-  minute = 0x22;
+  hour = 0x07;
+  minute = 0x32;
   second = 0x00;
 
   setDateDs1307(second, minute, hour, dayOfWeek, dayOfMonth, month, year);
@@ -215,6 +227,7 @@ void inicializarMotor() {
 }
 
 void buildReport() {
+  // updateClock();
   getDateDs1307(&second, &minute, &hour, &dayOfWeek, &dayOfMonth, &month, &year);
   date[0] = dayOfMonth;
   date[1] = month;
@@ -323,7 +336,6 @@ void printReports(byte userId) {
   }
 }
 
-
 uint8_t getNextReportNumber(byte userId) {
   char filename[20];
   sprintf(filename, "rep-%d.txt", userId);
@@ -342,7 +354,34 @@ uint8_t getNextReportNumber(byte userId) {
   return (count < 30) ? count + 1 : 0;
 }
 
+char decodificarDTMF() {
+  uint8_t number_pressed;
+  if (digitalRead(STQ) == LOW) {
+    return 0;
+  }
 
+  delay(250);
+  number_pressed = (digitalRead(Q1) << 0) | (digitalRead(Q2) << 1) | (digitalRead(Q3) << 2) | (digitalRead(Q4) << 3);
+
+  switch (number_pressed) {
+    case 0x01: Serial.println("DTMF: 1"); return '1';
+    case 0x02: Serial.println("DTMF: 2"); return '2';
+    case 0x03: Serial.println("DTMF: 3"); return '3';
+    case 0x04: Serial.println("DTMF: 4"); return '4';
+    case 0x05: Serial.println("DTMF: 5"); return '5';
+    case 0x06: Serial.println("DTMF: 6"); return '6';
+    case 0x07: Serial.println("DTMF: 7"); return '7';
+    case 0x08: Serial.println("DTMF: 8"); return '8';
+    case 0x09: Serial.println("DTMF: 9"); return '9';
+    case 0x0A: Serial.println("DTMF: 0"); return '0';
+    case 0x0B: Serial.println("DTMF: *"); return '*';
+    case 0x0C: Serial.println("DTMF: #"); return '#';
+    default:
+      Serial.print("DTMF invalido: ");
+      Serial.println(number_pressed);
+      return 0;
+  }
+}
 
 
 void teclado() {
@@ -354,8 +393,7 @@ void teclado() {
     do {
       datom = keypad.getKey();
       delay(60);
-      if (datom != '\0' 
-      {
+      if (datom != '\0') {
         switch (i + 1) {
           case 1:
             lcd.setCursor(6, 1);
@@ -446,13 +484,8 @@ void unDigito() {
       datom = datom - 0x30;
       flag = true;
     }
-
   } while (flag == false);
 }
-
-//DTMF TONE GENERATOR -> DOMOTICA -> SMARTPHONE (Wifi)
-//Es mejor usar el shield, el objetivo es evitar el uso del teclado matricial
-//Contestador
 
 void loop() {
 inicio:
@@ -529,7 +562,7 @@ paola:
     lcd.print(" DIGITE OPCION");
     delay(2000);
     lcd.clear();
-    lcd.print("1.CAMBIO DE CLAVE");
+    lcd.print("1.CAMBIAR CLAVE");
     lcd.setCursor(0, 1);
     lcd.print("2.HORA Y FECHA");
     delay(3000);
@@ -537,7 +570,13 @@ paola:
     lcd.setCursor(0, 0);
     lcd.print("3.SERVOMOTORES");
     lcd.setCursor(0, 1);
-    lcd.print("4.SALIR");
+    lcd.print("4.REPORTES");
+    delay(3000);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("5.DTMF 8870");
+    lcd.setCursor(0, 1);
+    lcd.print("6.SALIR");
     delay(3000);
     lcd.clear();
     unDigito();
@@ -571,12 +610,13 @@ paola:
         lcd.print("   ACTUALIZADA");
         delay(3000);
         goto paola;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("ERROR DE CLAVE");
+        delay(3000);
+        goto paola;
       }
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR DE CLAVE");
-      delay(3000);
-      goto paola;
     }
     if (datom == 0x02) {
       lcd.clear();
@@ -588,7 +628,7 @@ paola:
       goto paola;
     }
     if (datom == 0x03) {
-      for (i = 0; i < 5000; i++) {
+      for (i = 0; i < 3000; i++) {
         voltearDerecha();
         delay(tiempo);
       }
@@ -609,6 +649,38 @@ paola:
       goto paola;
     }
     if (datom == 0x05) {
+      lcd.clear();
+      lcd.print("Modo DTMF Activo");
+      char teclaDTMF = 0;
+
+      // Bucle de espera hasta que se presione una tecla física
+      do {
+        if (digitalRead(STQ) == HIGH) {
+          Serial.println("inside digital read");
+          teclaDTMF = decodificarDTMF();
+          if (teclaDTMF) {
+            lcd.clear();
+            lcd.print("DTMF: ");
+            lcd.print(teclaDTMF);
+            delay(1000);
+            lcd.setCursor(0, 1);
+            lcd.print("Esperando...");
+          }
+        }
+
+        datom = keypad.getKey();  // Para salir del modo
+      } while (datom == NO_KEY);
+
+      lcd.clear();
+      lcd.print("Saliendo...");
+      delay(1000);
+      lcd.clear();
+      goto inicio;
+
+
+      goto inicio;
+    }
+    if (datom == 0x06) {
       goto inicio;
     }
   }
@@ -663,12 +735,13 @@ jose:
         lcd.print("   ACTUALIZADA");
         delay(3000);
         goto jose;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("ERROR DE CLAVE");
+        delay(3000);
+        goto jose;
       }
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR DE CLAVE");
-      delay(3000);
-      goto jose;
     }
     if (datom == 0x02) {
       lcd.clear();
@@ -754,12 +827,13 @@ juan:
         lcd.print("   ACTUALIZADA");
         delay(3000);
         goto juan;
+      } else {
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("ERROR DE CLAVE");
+        delay(3000);
+        goto juan;
       }
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print("ERROR DE CLAVE");
-      delay(3000);
-      goto juan;
     }
     if (datom == 0x02) {
       lcd.clear();
@@ -794,11 +868,12 @@ juan:
     if (datom == 0x05) {
       goto inicio;
     }
+  } else {
+    Serial.println("ELSE GLOBAL");
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("ERROR DE CLAVE");
+    delay(3000);
+    goto inicio;
   }
-
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("ERROR DE CLAVE");
-  delay(3000);
-  goto inicio;
 }
